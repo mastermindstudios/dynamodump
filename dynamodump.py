@@ -270,17 +270,18 @@ def do_restore(conn, sleep_interval, source_table, destination_table, write_capa
     else:
       logging.info("Cannot find \"%s/%s\" directory containing dump files!" % (CURRENT_WORKING_DIR, source_table))
       sys.exit(1)
-  table_data = json.load(open(dump_data_path + "/" + source_table + "/" + SCHEMA_FILE))
-  table = table_data["Table"]
-  table_attribute_definitions = table["AttributeDefinitions"]
-  table_table_name = destination_table
-  table_key_schema = table["KeySchema"]
-  original_read_capacity = table["ProvisionedThroughput"]["ReadCapacityUnits"]
-  original_write_capacity = table["ProvisionedThroughput"]["WriteCapacityUnits"]
-  table_local_secondary_indexes = table.get("LocalSecondaryIndexes")
-  table_global_secondary_indexes = table.get("GlobalSecondaryIndexes")
+
 
   if not args.dataOnly:
+    table_data = json.load(open(dump_data_path + "/" + source_table + "/" + SCHEMA_FILE))
+    table = table_data["Table"]
+    table_attribute_definitions = table["AttributeDefinitions"]
+    table_table_name = destination_table
+    table_key_schema = table["KeySchema"]
+    original_read_capacity = table["ProvisionedThroughput"]["ReadCapacityUnits"]
+    original_write_capacity = table["ProvisionedThroughput"]["WriteCapacityUnits"]
+    table_local_secondary_indexes = table.get("LocalSecondaryIndexes")
+    table_global_secondary_indexes = table.get("GlobalSecondaryIndexes")
     # override table write capacity if specified, else use RESTORE_WRITE_CAPACITY if original write capacity is lower
     if write_capacity == None:
       if original_write_capacity < RESTORE_WRITE_CAPACITY:
