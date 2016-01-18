@@ -327,51 +327,52 @@ def do_restore(conn, sleep_interval, source_table, destination_table, write_capa
   data_file_list.sort()
 
   for data_file in data_file_list:
-    logging.info("Processing " + data_file + " of " + destination_table)
-    items = []
-    item_data = json.load(open(dump_data_path + "/" + source_table + "/" + DATA_DIR + "/" + data_file))
-    items.extend(item_data["Items"])
+    if data_file.endswith(".json"): # only process .json files -rw 1/18/16
+      logging.info("Processing " + data_file + " of " + destination_table)
+      items = []
+      item_data = json.load(open(dump_data_path + "/" + source_table + "/" + DATA_DIR + "/" + data_file))
+      items.extend(item_data["Items"])
 
-    # batch write data
-    put_requests = []
-    while len(items) > 0:
-      put_requests.append({"PutRequest": {"Item": items.pop(0)}})
+      # batch write data
+      put_requests = []
+      while len(items) > 0:
+        put_requests.append({"PutRequest": {"Item": items.pop(0)}})
 
-      # flush every MAX_BATCH_WRITE
-      if len(put_requests) == MAX_BATCH_WRITE:
-        logging.debug("Writing next " + str(MAX_BATCH_WRITE) + " items to " + destination_table + "..")
+        # flush every MAX_BATCH_WRITE
+        if len(put_requests) == MAX_BATCH_WRITE:
+          logging.debug("Writing next " + str(MAX_BATCH_WRITE) + " items to " + destination_table + "..")
+          batch_write(conn, sleep_interval, destination_table, put_requests)
+          del put_requests[:]
+
+      # flush remainder
+      if len(put_requests) > 0:
         batch_write(conn, sleep_interval, destination_table, put_requests)
-        del put_requests[:]
 
-    # flush remainder
-    if len(put_requests) > 0:
-      batch_write(conn, sleep_interval, destination_table, put_requests)
+    if not args.dataOnly and not args.skipThroughputUpdate:
+      # revert to original table write capacity if it has been modified
+      if write_capacity != original_write_capacity:
+        update_provisioned_throughput(conn, destination_table, original_read_capacity, original_write_capacity, False)
 
-  if not args.dataOnly and not args.skipThroughputUpdate:
-    # revert to original table write capacity if it has been modified
-    if write_capacity != original_write_capacity:
-      update_provisioned_throughput(conn, destination_table, original_read_capacity, original_write_capacity, False)
+      # loop through each GSI to check if it has changed and update if necessary
+      if table_global_secondary_indexes is not None:
+        gsi_data = []
+        for gsi in table_global_secondary_indexes:
+          original_gsi_write_capacity = original_gsi_write_capacities.pop(0)
+          if original_gsi_write_capacity != gsi["ProvisionedThroughput"]["WriteCapacityUnits"]:
+            gsi_data.append({"Update": { "IndexName" : gsi["IndexName"], "ProvisionedThroughput": { "ReadCapacityUnits": int(gsi["ProvisionedThroughput"]["ReadCapacityUnits"]), "WriteCapacityUnits": int(original_gsi_write_capacity),},},})
 
-    # loop through each GSI to check if it has changed and update if necessary
-    if table_global_secondary_indexes is not None:
-      gsi_data = []
-      for gsi in table_global_secondary_indexes:
-        original_gsi_write_capacity = original_gsi_write_capacities.pop(0)
-        if original_gsi_write_capacity != gsi["ProvisionedThroughput"]["WriteCapacityUnits"]:
-          gsi_data.append({"Update": { "IndexName" : gsi["IndexName"], "ProvisionedThroughput": { "ReadCapacityUnits": int(gsi["ProvisionedThroughput"]["ReadCapacityUnits"]), "WriteCapacityUnits": int(original_gsi_write_capacity),},},})
-
-      logging.info("Updating " + destination_table + " global secondary indexes write capacities as necessary..")
-      while True:
-        try:
-          conn.update_table(destination_table, global_secondary_index_updates=gsi_data)
-          break
-        except boto.exception.JSONResponseError, e:
-          if e.body["__type"] == "com.amazonaws.dynamodb.v20120810#LimitExceededException":
-            logging.info("Limit exceeded, retrying updating throughput of GlobalSecondaryIndexes in " + destination_table + "..")
-            time.sleep(sleep_interval)
-          elif e.body["__type"] == "com.amazon.coral.availability#ThrottlingException":
-            logging.info("Control plane limit exceeded, retrying updating throughput of GlobalSecondaryIndexes in " + destination_table + "..")
-            time.sleep(sleep_interval)
+        logging.info("Updating " + destination_table + " global secondary indexes write capacities as necessary..")
+        while True:
+          try:
+            conn.update_table(destination_table, global_secondary_index_updates=gsi_data)
+            break
+          except boto.exception.JSONResponseError, e:
+            if e.body["__type"] == "com.amazonaws.dynamodb.v20120810#LimitExceededException":
+              logging.info("Limit exceeded, retrying updating throughput of GlobalSecondaryIndexes in " + destination_table + "..")
+              time.sleep(sleep_interval)
+            elif e.body["__type"] == "com.amazon.coral.availability#ThrottlingException":
+              logging.info("Control plane limit exceeded, retrying updating throughput of GlobalSecondaryIndexes in " + destination_table + "..")
+              time.sleep(sleep_interval)
 
   logging.info("Restore for " + source_table + " to " + destination_table + " table completed. Time taken: " + str(datetime.datetime.now().replace(microsecond=0) - start_time))
 
