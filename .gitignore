@@ -37,3 +37,8 @@ nosetests.xml
 
 dump
 .idea
+
+.ds_store
+dumps
+holserver_game_data
+holserver_user
